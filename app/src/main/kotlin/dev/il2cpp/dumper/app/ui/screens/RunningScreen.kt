@@ -83,6 +83,12 @@ fun RunningScreen(vm: MainViewModel) {
                 is DumpController.State.Failed -> {
                     Header(s.title, s.error, -1f, running = false, failed = true)
                     Spacer(Modifier.height(16.dp))
+                    if (s.error.contains("metadata", ignoreCase = true)) {
+                        Button(onClick = { vm.popTo(Screen.Home); vm.clearDumpState(); vm.navigate(Screen.Doctor()) }, modifier = Modifier.fillMaxWidth()) {
+                            Text("Open Metadata Doctor")
+                        }
+                        Spacer(Modifier.height(10.dp))
+                    }
                     OutlinedButton(onClick = { vm.popTo(Screen.Home); vm.clearDumpState() }, modifier = Modifier.fillMaxWidth()) { Text("Back") }
                 }
                 DumpController.State.Idle -> {

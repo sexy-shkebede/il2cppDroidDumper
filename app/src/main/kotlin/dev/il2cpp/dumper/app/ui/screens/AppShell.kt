@@ -56,6 +56,7 @@ fun AppShell(vm: MainViewModel) {
                     is Screen.Viewer -> ViewerScreen(vm, screen.id, screen.fileName)
                     is Screen.DiffPicker -> DiffPickerScreen(vm)
                     is Screen.DiffResult -> DiffResultScreen(vm, screen.oldId, screen.newId)
+                    is Screen.Doctor -> MetadataDoctorScreen(vm, screen.metaUri)
                 }
             }
 
@@ -94,5 +95,6 @@ private fun Screen.depth(): Int = when (this) {
     is Screen.DumpDetail -> 2
     is Screen.DiffPicker -> 2
     is Screen.ClassBrowser, is Screen.Viewer, is Screen.DiffResult -> 3
+    is Screen.Doctor -> 3
     is Screen.TypeDetail -> 4
 }

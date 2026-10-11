@@ -32,6 +32,9 @@ sealed class Screen {
     data class ClassBrowser(val id: String) : Screen()
     data class TypeDetail(val id: String, val typeDefIndex: Int) : Screen()
     data class Viewer(val id: String, val fileName: String) : Screen()
+
+    /** Metadata Doctor. [metaUri] string is a content:// URI to a .dat, or null to pick one. */
+    data class Doctor(val metaUri: String? = null) : Screen()
 }
 
 data class AppsUiState(

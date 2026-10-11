@@ -23,6 +23,7 @@ import androidx.compose.material.icons.rounded.Android
 import androidx.compose.material.icons.rounded.CompareArrows
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.FolderZip
+import androidx.compose.material.icons.rounded.HealthAndSafety
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Memory
 import androidx.compose.material.icons.rounded.Shield
@@ -85,6 +86,7 @@ fun HomeScreen(vm: MainViewModel) {
                     onPickApk = { pickApk.launch(arrayOf("*/*")) },
                     onApps = { vm.navigate(Screen.Apps) },
                     onDiff = { vm.navigate(Screen.DiffPicker) },
+                    onDoctor = { vm.navigate(Screen.Doctor()) },
                 )
             }
             item {
@@ -108,7 +110,7 @@ fun HomeScreen(vm: MainViewModel) {
 }
 
 @Composable
-private fun HeroActions(onPickApk: () -> Unit, onApps: () -> Unit, onDiff: () -> Unit) {
+private fun HeroActions(onPickApk: () -> Unit, onApps: () -> Unit, onDiff: () -> Unit, onDoctor: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Card(
             onClick = onApps,
@@ -133,6 +135,10 @@ private fun HeroActions(onPickApk: () -> Unit, onApps: () -> Unit, onDiff: () ->
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             MiniAction(Modifier.weight(1f), Icons.Rounded.FolderZip, "Pick APK / XAPK", "or libil2cpp bundle", onPickApk)
             MiniAction(Modifier.weight(1f), Icons.Rounded.CompareArrows, "Diff dumps", "compare versions", onDiff)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            MiniAction(Modifier.weight(1f), Icons.Rounded.HealthAndSafety, "Metadata Doctor", "“not valid file”?", onDoctor)
+            Spacer(Modifier.weight(1f))
         }
     }
 }
