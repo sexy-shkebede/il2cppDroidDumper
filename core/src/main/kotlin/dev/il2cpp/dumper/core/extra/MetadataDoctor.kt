@@ -75,6 +75,8 @@ object MetadataDoctor {
         val advice: List<String>,
         /** True when [attemptRecover] has a realistic chance (set after a dry probe). */
         val recoverable: Boolean,
+        /** The recovered bytes when [recoverable] — computed during diagnosis so the UI needn't redo the work. */
+        val recovery: Recovery? = null,
     )
 
     data class Recovery(val bytes: ByteArray, val version: Int, val method: String)
@@ -209,6 +211,7 @@ object MetadataDoctor {
                     "Tap “Try to recover” to produce a clean global-metadata.dat (v${recovered.version}), then dump it with libil2cpp.so.",
                 ),
                 recoverable = true,
+                recovery = recovered,
             )
         }
 

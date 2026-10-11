@@ -24,7 +24,6 @@ import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Dangerous
 import androidx.compose.material.icons.rounded.FileOpen
 import androidx.compose.material.icons.rounded.HealthAndSafety
-import androidx.compose.material.icons.rounded.Healing
 import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material3.Button
@@ -43,6 +42,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -65,33 +65,36 @@ import kotlinx.coroutines.withContext
 @Composable
 fun MetadataDoctorScreen(vm: MainViewModel, metaUri: String?) {
     val context = LocalContext.current
-    var uri by remember { mutableStateOf(metaUri) }
-    var recovered by remember { mutableStateOf<MetadataDoctor.Recovery?>(null) }
-    var recovering by remember { mutableStateOf(false) }
+    var uri by rememberSaveable { mutableStateOf(metaUri) }
 
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { picked ->
         if (picked != null) {
             runCatching { context.contentResolver.takePersistableUriPermission(picked, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION) }
             uri = picked.toString()
-            recovered = null
         }
     }
 
-    // Load bytes + diagnose off the main thread. null = still loading / nothing picked yet.
-    val diag by produceState<MetadataDoctor.Diagnosis?>(initialValue = null, uri) {
+    // Load bytes + diagnose off the main thread. Tri-state so a read failure is distinct from loading.
+    val state by produceState<DoctorState>(initialValue = DoctorState.Loading, uri) {
         val u = uri
-        value = null
-        if (u == null) return@produceState
+        value = DoctorState.Loading
+        if (u == null) { value = DoctorState.Idle; return@produceState }
         value = withContext(Dispatchers.IO) {
-            runCatching {
-                val bytes = context.contentResolver.openInputStream(u.toUri())!!.use { it.readBytes() }
-                MetadataDoctor.diagnose(bytes)
-            }.getOrNull()
+            try {
+                context.contentResolver.openInputStream(u.toUri()).use { input ->
+                    if (input == null) return@use DoctorState.Failed("Couldn't open that file. It may have been moved, or its app needs to download it first.")
+                    val bytes = input.readBytes()
+                    if (bytes.size > MAX_BYTES) DoctorState.Failed("File is ${bytes.size / 1024 / 1024} MB — too large to analyze here. A real global-metadata.dat is well under 64 MB.")
+                    else DoctorState.Loaded(MetadataDoctor.diagnose(bytes))
+                }
+            } catch (e: Exception) {
+                DoctorState.Failed(e.message ?: "Couldn't read that file.")
+            }
         }
     }
 
     val saveLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { dest ->
-        val rec = recovered
+        val rec = (state as? DoctorState.Loaded)?.diagnosis?.recovery
         if (dest != null && rec != null) {
             runCatching { context.contentResolver.openOutputStream(dest)?.use { it.write(rec.bytes) } }
         }
@@ -110,19 +113,17 @@ fun MetadataDoctorScreen(vm: MainViewModel, metaUri: String?) {
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = pad.calculateTopPadding(), bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            if (uri == null) {
-                item { Intro() }
-                item {
-                    Button(onClick = { pick.launch(arrayOf("*/*")) }, modifier = Modifier.fillMaxWidth()) {
-                        Icon(Icons.Rounded.FileOpen, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp))
-                        Text("Pick global-metadata.dat")
+            when (val s = state) {
+                is DoctorState.Idle -> {
+                    item { Intro() }
+                    item {
+                        Button(onClick = { pick.launch(arrayOf("*/*")) }, modifier = Modifier.fillMaxWidth()) {
+                            Icon(Icons.Rounded.FileOpen, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp))
+                            Text("Pick global-metadata.dat")
+                        }
                     }
                 }
-                return@LazyColumn
-            }
-            val d = diag
-            if (d == null) {
-                item {
+                is DoctorState.Loading -> item {
                     Box(Modifier.fillMaxWidth().padding(top = 48.dp), contentAlignment = Alignment.Center) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             CircularProgressIndicator()
@@ -131,64 +132,67 @@ fun MetadataDoctorScreen(vm: MainViewModel, metaUri: String?) {
                         }
                     }
                 }
-                return@LazyColumn
-            }
-            item { VerdictHero(d) }
-            item {
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    StatTile("%.2f".format(d.entropy), "entropy /8", Modifier.weight(1f))
-                    StatTile("%.0f%%".format(d.zeroRatio * 100), "zero bytes", Modifier.weight(1f))
-                }
-            }
-            item { SignalsCard(d) }
-            if (d.verdict == MetadataDoctor.Verdict.VALID) {
-                item {
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        StatTile(d.types.toString(), "types", Modifier.weight(1f))
-                        StatTile(d.methods.toString(), "methods", Modifier.weight(1f))
+                is DoctorState.Failed -> {
+                    item { FailedCard(s.message) }
+                    item {
+                        Button(onClick = { pick.launch(arrayOf("*/*")) }, modifier = Modifier.fillMaxWidth()) {
+                            Icon(Icons.Rounded.FileOpen, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Pick another file")
+                        }
                     }
                 }
-            }
-            item { AdviceCard(d.advice) }
-            if (d.recoverable && recovered == null) {
-                item {
-                    Button(
-                        onClick = {
-                            recovering = true
-                            // recovery is quick (bounded), run inline on a background dispatcher via produceState-like pattern
-                        },
-                        enabled = !recovering,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Icon(Icons.Rounded.Healing, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp))
-                        Text(if (recovering) "Recovering…" else "Try to recover")
+                is DoctorState.Loaded -> {
+                    val d = s.diagnosis
+                    item { VerdictHero(d) }
+                    item {
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            StatTile("%.2f".format(d.entropy), "entropy /8", Modifier.weight(1f))
+                            StatTile("%.0f%%".format(d.zeroRatio * 100), "zero bytes", Modifier.weight(1f))
+                        }
                     }
-                }
-            }
-            val rec = recovered
-            if (rec != null) {
-                item { RecoveredCard(rec) { saveLauncher.launch("global-metadata.dat") } }
-            }
-            item {
-                androidx.compose.material3.OutlinedButton(onClick = { pick.launch(arrayOf("*/*")) }, modifier = Modifier.fillMaxWidth()) {
-                    Icon(Icons.Rounded.FileOpen, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Analyze another file")
+                    item { SignalsCard(d) }
+                    if (d.verdict == MetadataDoctor.Verdict.VALID) {
+                        item {
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                StatTile(d.types.toString(), "types", Modifier.weight(1f))
+                                StatTile(d.methods.toString(), "methods", Modifier.weight(1f))
+                            }
+                        }
+                    }
+                    item { AdviceCard(d.advice) }
+                    // Recovery was already computed during diagnosis — present it directly, no re-read/re-search.
+                    d.recovery?.let { rec ->
+                        item { RecoveredCard(rec) { saveLauncher.launch("global-metadata.dat") } }
+                    }
+                    item {
+                        androidx.compose.material3.OutlinedButton(onClick = { pick.launch(arrayOf("*/*")) }, modifier = Modifier.fillMaxWidth()) {
+                            Icon(Icons.Rounded.FileOpen, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Analyze another file")
+                        }
+                    }
                 }
             }
         }
     }
+}
 
-    // Perform recovery when requested.
-    if (recovering) {
-        val u = uri
-        androidx.compose.runtime.LaunchedEffect(u) {
-            val result = withContext(Dispatchers.IO) {
-                runCatching {
-                    val bytes = context.contentResolver.openInputStream(u!!.toUri())!!.use { it.readBytes() }
-                    MetadataDoctor.attemptRecover(bytes)
-                }.getOrNull()
+private const val MAX_BYTES = 64L * 1024 * 1024
+
+private sealed interface DoctorState {
+    data object Idle : DoctorState
+    data object Loading : DoctorState
+    data class Failed(val message: String) : DoctorState
+    data class Loaded(val diagnosis: MetadataDoctor.Diagnosis) : DoctorState
+}
+
+@Composable
+private fun FailedCard(message: String) {
+    Card(shape = MaterialTheme.shapes.large, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
+        Row(Modifier.padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Rounded.Dangerous, null, tint = MaterialTheme.colorScheme.onErrorContainer, modifier = Modifier.size(32.dp))
+            Spacer(Modifier.width(16.dp))
+            Column {
+                Text("Couldn't read the file", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onErrorContainer)
+                Text(message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onErrorContainer)
             }
-            recovered = result
-            recovering = false
         }
     }
 }
